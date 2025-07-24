@@ -17,6 +17,7 @@ const db = firebase.firestore();
 let isConnected = false;
 let myToken = '';
 let partnerToken = '';
+let notificationListener = null; // Store the listener for cleanup
 
 // Check for existing connection
 const savedConnection = localStorage.getItem('weatherConnection');
@@ -47,6 +48,15 @@ function closeConnectModal() {
   setTimeout(() => modal.classList.add('hidden'), 300);
 }
 
+// Cleanup previous connection
+function cleanupPreviousConnection() {
+  if (notificationListener) {
+    notificationListener();
+    notificationListener = null;
+  }
+  isConnected = false;
+}
+
 // Connection handling
 async function connectWithPartner(autoConnect = false) {
   const myTokenInput = document.getElementById('myToken');
@@ -62,29 +72,44 @@ async function connectWithPartner(autoConnect = false) {
   }
 
   try {
+    // Cleanup previous connection if any
+    cleanupPreviousConnection();
+
     // Store connection in Firestore
     await db.collection('connections').doc(myToken).set({
       partnerToken: partnerToken,
-      lastUpdated: firebase.firestore.FieldValue.serverTimestamp()
+      lastUpdated: firebase.firestore.FieldValue.serverTimestamp(),
+      deviceType: /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ? 'mobile' : 'desktop'
     });
 
     // Save connection locally
     localStorage.setItem('weatherConnection', JSON.stringify({ myToken, partnerToken }));
     
-    // Set up real-time listener for notifications
-    db.collection('notifications')
+    // Set up real-time listener for notifications with proper cleanup
+    const notificationsRef = db.collection('notifications')
       .doc(myToken)
       .collection('messages')
       .orderBy('timestamp', 'desc')
-      .limit(1)
-      .onSnapshot((snapshot) => {
-        snapshot.docChanges().forEach((change) => {
-          if (change.type === 'added') {
-            const notification = change.doc.data();
+      .limit(1);
+
+    notificationListener = notificationsRef.onSnapshot((snapshot) => {
+      snapshot.docChanges().forEach((change) => {
+        if (change.type === 'added') {
+          const notification = change.doc.data();
+          // Only show notifications that are less than 5 seconds old
+          const notificationTime = notification.timestamp?.toMillis() || Date.now();
+          if (Date.now() - notificationTime < 5000) {
             showNotification(notification.title, notification.message);
+            // Clean up the notification after showing it
+            change.doc.ref.delete().catch(console.error);
           }
-        });
+        }
       });
+    }, (error) => {
+      console.error("Notification listener error:", error);
+      statusDiv.textContent = 'Connection error. Please reconnect.';
+      cleanupPreviousConnection();
+    });
 
     isConnected = true;
     statusDiv.textContent = 'Connected!';
@@ -94,23 +119,34 @@ async function connectWithPartner(autoConnect = false) {
   } catch (error) {
     console.error('Connection error:', error);
     statusDiv.textContent = 'Connection failed. Please try again.';
+    cleanupPreviousConnection();
   }
 }
 
 // Show notification
-function showNotification(title, message) {
+async function showNotification(title, message) {
+  // Check if the browser supports notifications
   if ('Notification' in window) {
-    Notification.requestPermission().then(function(permission) {
+    try {
+      const permission = await Notification.requestPermission();
       if (permission === 'granted') {
-        new Notification(title, {
+        // Create and show the notification
+        const notification = new Notification(title, {
           body: message,
-          icon: '/icon-192x192.png'
+          icon: '/icon-192x192.png',
+          tag: 'weather-notification', // Prevent duplicate notifications
+          renotify: true // Allow notifications with the same tag to replace each other
         });
+
+        // Close the notification after 3 seconds
+        setTimeout(() => notification.close(), 3000);
       }
-    });
+    } catch (error) {
+      console.error('Notification error:', error);
+    }
   }
 
-  // Also show in-app notification
+  // Always show in-app notification
   const notification = document.createElement('div');
   notification.className = 'in-app-notification';
   notification.innerHTML = `
@@ -119,6 +155,15 @@ function showNotification(title, message) {
   `;
   document.body.appendChild(notification);
   
+  // Remove any existing notifications
+  const existingNotifications = document.querySelectorAll('.in-app-notification');
+  existingNotifications.forEach(notif => {
+    if (notif !== notification) {
+      notif.remove();
+    }
+  });
+
+  // Show and remove the notification with animation
   setTimeout(() => {
     notification.classList.add('show');
     setTimeout(() => {
@@ -142,6 +187,13 @@ async function sendNotificationToPartner(type) {
       'storm': '⛈️ Your partner sent you a storm alert!'
     };
 
+    // Check if partner exists
+    const partnerDoc = await db.collection('connections').doc(partnerToken).get();
+    if (!partnerDoc.exists) {
+      alert('Partner not found. Ask them to connect first.');
+      return;
+    }
+
     // Add notification to partner's collection
     await db.collection('notifications')
       .doc(partnerToken)
@@ -150,7 +202,8 @@ async function sendNotificationToPartner(type) {
         title: 'Weather Alert',
         message: messages[type],
         type: type,
-        timestamp: firebase.firestore.FieldValue.serverTimestamp()
+        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+        sender: myToken
       });
 
   } catch (error) {
