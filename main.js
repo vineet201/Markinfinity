@@ -373,24 +373,34 @@ async function sendNotificationToPartner(type) {
       return;
     }
 
-    // Send notification through Firebase Cloud Messaging
-    const message = {
-      notification: {
-        title: 'Weather Alert',
-        body: messages[type]
-      },
-      token: partnerData.fcmToken
-    };
-
+    // Send notification through cloud function
+    const functionUrl = 'https://us-central1-weather-notify-8bf63.cloudfunctions.net/sendPushNotification';
+    
     try {
-      // Send through Firebase Cloud Messaging
-      await messaging.send(message);
-      log('Notification sent successfully through FCM');
-    } catch (error) {
-      console.error('FCM send error:', error);
-      log('FCM send error:', error.message);
+      const response = await fetch(functionUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          token: partnerData.fcmToken,
+          title: 'Weather Alert',
+          body: messages[type],
+          type: type
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to send notification');
+      }
+
+      log('Push notification sent successfully');
       
-      // Fallback: Store in Firestore for partner to retrieve
+    } catch (error) {
+      console.error('Push notification error:', error);
+      log('Push notification error:', error.message);
+      
+      // Fallback: Store in Firestore
       await db.collection('notifications')
         .doc(partnerToken)
         .collection('messages')

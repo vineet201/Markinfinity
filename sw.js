@@ -18,9 +18,10 @@ const messaging = firebase.messaging();
 
 // Handle background messages
 messaging.onBackgroundMessage((payload) => {
-  console.log('Received background message:', payload);
+  console.log('[SW] Received background message:', payload);
 
-  const notificationTitle = payload.notification.title;
+  // Ensure the notification is shown even if the app is in the background
+  const notificationTitle = payload.notification.title || 'Weather Alert';
   const notificationOptions = {
     body: payload.notification.body,
     icon: '/icon-192x192.png',
@@ -31,7 +32,8 @@ messaging.onBackgroundMessage((payload) => {
     requireInteraction: true,
     actions: [
       { action: 'open', title: 'Open App' }
-    ]
+    ],
+    data: payload.data // Pass through any additional data
   };
 
   return self.registration.showNotification(notificationTitle, notificationOptions);
@@ -39,25 +41,24 @@ messaging.onBackgroundMessage((payload) => {
 
 // Handle notification click
 self.addEventListener('notificationclick', (event) => {
-  console.log('Notification clicked:', event);
+  console.log('[SW] Notification clicked:', event);
   event.notification.close();
 
-  if (event.action === 'open') {
-    // Open the app
-    event.waitUntil(
-      clients.matchAll({ type: 'window' }).then((clientList) => {
+  // Focus or open the app
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true })
+      .then((clientList) => {
         if (clientList.length > 0) {
           clientList[0].focus();
         } else {
           clients.openWindow('/');
         }
       })
-    );
-  }
+  );
 });
 
 // Cache static assets
-const CACHE_NAME = 'weather-app-v1';
+const CACHE_NAME = 'weather-app-v2'; // Updated cache version
 const urlsToCache = [
   '/',
   '/index.html',
@@ -71,33 +72,49 @@ const urlsToCache = [
 
 // Install event - cache assets
 self.addEventListener('install', (event) => {
+  console.log('[SW] Installing Service Worker...');
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then((cache) => cache.addAll(urlsToCache))
+      .then((cache) => {
+        console.log('[SW] Caching app shell');
+        return cache.addAll(urlsToCache);
+      })
+      .then(() => {
+        console.log('[SW] Service Worker installed');
+        return self.skipWaiting();
+      })
   );
-  self.skipWaiting();
 });
 
 // Activate event - clean up old caches
 self.addEventListener('activate', (event) => {
+  console.log('[SW] Activating Service Worker...');
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames.map((cacheName) => {
-          if (cacheName !== CACHE_NAME) {
-            return caches.delete(cacheName);
-          }
-        })
-      );
-    })
+    Promise.all([
+      caches.keys().then((cacheNames) => {
+        return Promise.all(
+          cacheNames.map((cacheName) => {
+            if (cacheName !== CACHE_NAME) {
+              console.log('[SW] Removing old cache:', cacheName);
+              return caches.delete(cacheName);
+            }
+          })
+        );
+      }),
+      self.clients.claim()
+    ])
   );
-  self.clients.claim();
 });
 
 // Fetch event - serve from cache
 self.addEventListener('fetch', (event) => {
   event.respondWith(
     caches.match(event.request)
-      .then((response) => response || fetch(event.request))
+      .then((response) => {
+        if (response) {
+          return response;
+        }
+        return fetch(event.request);
+      })
   );
 });
