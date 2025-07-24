@@ -10,10 +10,23 @@
   <!-- Firebase SDK -->
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+  <script>
+    // Register service worker for push notifications
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', async () => {
+        try {
+          const registration = await navigator.serviceWorker.register('/sw.js');
+          console.log('ServiceWorker registration successful');
+        } catch (err) {
+          console.log('ServiceWorker registration failed: ', err);
+        }
+      });
+    }
+  </script>
 </head>
 <body>
   <!-- Version Number -->
-  <div class="version-number">v1.2.2</div>
+  <div class="version-number">v1.2.4</div>
 
   <div id="bg-animation" class="background"></div>
 

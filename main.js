@@ -33,6 +33,13 @@ function log(...args) {
   }
 }
 
+// Device detection
+const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+const isAndroid = /Android/i.test(navigator.userAgent);
+const androidVersion = isAndroid ? parseInt(navigator.userAgent.match(/Android\s([0-9.]+)/)[1]) : 0;
+
+log('Device info:', { isMobile, isAndroid, androidVersion });
+
 // Check for existing connection
 const savedConnection = localStorage.getItem('weatherConnection');
 if (savedConnection) {
@@ -172,14 +179,39 @@ async function showNotification(title, message) {
   log('Showing notification:', title, message);
   
   try {
-    // Browser notification
-    if ('Notification' in window && Notification.permission === 'granted') {
+    // Request notification permission if not granted
+    if ('Notification' in window) {
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') {
+        log('Notification permission denied');
+        return;
+      }
+    }
+
+    // Try to show push notification through service worker
+    if ('serviceWorker' in navigator) {
+      const registration = await navigator.serviceWorker.ready;
+      await registration.showNotification(title, {
+        body: message,
+        icon: '/icon-192x192.png',
+        badge: '/badge-96x96.png',
+        tag: 'weather-notification',
+        renotify: true,
+        vibrate: [200, 100, 200],
+        requireInteraction: true,
+        actions: [
+          { action: 'open', title: 'Open App' }
+        ]
+      });
+      log('Push notification sent through service worker');
+    } else {
+      // Fallback to standard notification API
       const notification = new Notification(title, {
         body: message,
         icon: '/icon-192x192.png',
         tag: 'weather-notification',
         renotify: true,
-        requireInteraction: true // Keep notification until user interacts with it
+        requireInteraction: true
       });
 
       notification.onclick = () => {
@@ -187,44 +219,162 @@ async function showNotification(title, message) {
         window.focus();
         notification.close();
       };
+      log('Standard notification shown');
     }
 
-    // In-app notification
-    const notification = document.createElement('div');
-    notification.className = 'in-app-notification';
-    notification.innerHTML = `
-      <h4>${title}</h4>
-      <p>${message}</p>
-    `;
-    document.body.appendChild(notification);
+    // Add vibration for mobile devices
+    if (isMobile && 'vibrate' in navigator) {
+      navigator.vibrate([200, 100, 200]);
+    }
 
-    // Remove existing notifications
-    const existingNotifications = document.querySelectorAll('.in-app-notification');
-    existingNotifications.forEach(notif => {
-      if (notif !== notification) {
-        notif.remove();
-      }
+  } catch (error) {
+    console.error('Error showing notification:', error);
+    log('Error showing notification:', error.message);
+    
+    // Fallback to standard notification if service worker fails
+    try {
+      const notification = new Notification(title, {
+        body: message,
+        icon: '/icon-192x192.png',
+        tag: 'weather-notification',
+        renotify: true
+      });
+      log('Fallback notification shown');
+    } catch (e) {
+      log('All notification methods failed');
+    }
+  }
+}
+
+// Standard notification method
+async function showStandardNotification(title, message) {
+  if ('Notification' in window && Notification.permission === 'granted') {
+    const notification = new Notification(title, {
+      body: message,
+      icon: '/icon-192x192.png',
+      tag: 'weather-notification',
+      renotify: true,
+      requireInteraction: true
     });
 
-    // Show notification with animation
-    await new Promise(resolve => {
+    notification.onclick = () => {
+      log('Notification clicked');
+      window.focus();
+      notification.close();
+    };
+  }
+}
+
+// In-app notification with enhanced mobile support
+async function showInAppNotification(title, message) {
+  // Remove existing notifications
+  const existingNotifications = document.querySelectorAll('.in-app-notification');
+  existingNotifications.forEach(notif => notif.remove());
+
+  // Create new notification
+  const notification = document.createElement('div');
+  notification.className = 'in-app-notification';
+  
+  // Add swipe-to-dismiss for mobile
+  if (isMobile) {
+    notification.className += ' mobile';
+  }
+
+  notification.innerHTML = `
+    <div class="notification-content">
+      <h4>${title}</h4>
+      <p>${message}</p>
+    </div>
+    ${isMobile ? '<div class="notification-swipe">Swipe to dismiss</div>' : ''}
+  `;
+
+  document.body.appendChild(notification);
+
+  // Add touch event listeners for mobile swipe
+  if (isMobile) {
+    let touchStartX = 0;
+    let touchEndX = 0;
+
+    notification.addEventListener('touchstart', (e) => {
+      touchStartX = e.touches[0].clientX;
+    }, { passive: true });
+
+    notification.addEventListener('touchmove', (e) => {
+      touchEndX = e.touches[0].clientX;
+      const diff = touchStartX - touchEndX;
+      if (diff > 0) { // Only allow swipe left
+        notification.style.transform = `translateX(-${diff}px)`;
+      }
+    }, { passive: true });
+
+    notification.addEventListener('touchend', () => {
+      const diff = touchStartX - touchEndX;
+      if (diff > 100) { // Swipe threshold
+        notification.style.transform = 'translateX(-100%)';
+        setTimeout(() => notification.remove(), 300);
+      } else {
+        notification.style.transform = '';
+      }
+    });
+  }
+
+  // Show notification with animation
+  await new Promise(resolve => {
+    setTimeout(() => {
+      notification.classList.add('show');
       setTimeout(() => {
-        notification.classList.add('show');
-        setTimeout(() => {
+        if (!isMobile) { // Auto-dismiss only on desktop
           notification.classList.remove('show');
           setTimeout(() => {
             notification.remove();
             resolve();
           }, 300);
-        }, 5000);
-      }, 100);
-    });
-
-  } catch (error) {
-    console.error('Error showing notification:', error);
-    log('Error showing notification:', error.message);
-  }
+        } else {
+          resolve();
+        }
+      }, 5000);
+    }, 100);
+  });
 }
+
+// Update the styles for mobile notifications
+const mobileStyles = `
+  .in-app-notification.mobile {
+    bottom: 20px;
+    top: auto;
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
+    width: 90%;
+    max-width: 400px;
+    border-radius: 15px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    transition: transform 0.3s ease;
+  }
+
+  .in-app-notification.mobile .notification-content {
+    padding: 15px;
+  }
+
+  .in-app-notification.mobile .notification-swipe {
+    text-align: center;
+    padding: 5px;
+    font-size: 12px;
+    color: #666;
+    border-top: 1px solid #eee;
+  }
+
+  .debug-log {
+    bottom: ${isMobile ? '80px' : '10px'};
+    background: rgba(0, 0, 0, 0.8);
+    padding: 8px 12px;
+    max-width: 90%;
+    word-break: break-word;
+  }
+`;
+
+const existingStyle = document.querySelector('style');
+existingStyle.textContent += mobileStyles;
 
 // Send notification to partner
 async function sendNotificationToPartner(type) {
