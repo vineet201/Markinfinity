@@ -18,42 +18,33 @@ const messaging = firebase.messaging.isSupported() ? firebase.messaging() : null
 const processedNotifications = new Set();
 
 // Initialize notifications
-if (messaging) {
-  // Request permission and get token
-  requestNotificationPermission();
-  
-  // Handle foreground messages
-  messaging.onMessage((payload) => {
-    console.log('Received foreground message:', payload);
-    showNotification(payload.notification.title, payload.notification.body);
-  });
-}
+async function initializeNotifications() {
+  if (!messaging) {
+    console.log('Firebase messaging not supported');
+    return;
+  }
 
-// Request notification permission and get FCM token
-async function requestNotificationPermission() {
   try {
     const permission = await Notification.requestPermission();
     if (permission === 'granted') {
-      // Get FCM token
       const token = await messaging.getToken({
         vapidKey: 'BORQj7sd-9bNyPIEr7GG4PkdTFBpMULNei5E80m_v709n9Kx8njg-EnACw9L1vR8KjfaGDHrUTg4UmpqoiPtjmY'
       });
       console.log('FCM Token:', token);
-      
-      // Save token to localStorage
       localStorage.setItem('fcmToken', token);
-      
-      // Handle token refresh
-      messaging.onTokenRefresh(async () => {
-        const newToken = await messaging.getToken({
-          vapidKey: 'BORQj7sd-9bNyPIEr7GG4PkdTFBpMULNei5E80m_v709n9Kx8njg-EnACw9L1vR8KjfaGDHrUTg4UmpqoiPtjmY'
-        });
-        localStorage.setItem('fcmToken', newToken);
-      });
     }
   } catch (error) {
-    console.error('Error getting permission or token:', error);
+    console.error('Error initializing notifications:', error);
   }
+
+  // Handle foreground messages
+  messaging.onMessage((payload) => {
+    console.log('Received foreground message:', payload);
+    showNotification(
+      payload.data.title || payload.notification.title,
+      payload.data.message || payload.notification.body
+    );
+  });
 }
 
 // Connection state
@@ -105,13 +96,12 @@ async function connectWithPartner(autoConnect = false) {
   }
 
   try {
-    // Clear old notifications first
+    // Clear old notifications
     const oldNotifications = await db.collection('notifications')
       .doc(myToken)
       .collection('messages')
       .get();
 
-    // Delete old notifications
     const batch = db.batch();
     oldNotifications.docs.forEach((doc) => {
       batch.delete(doc.ref);
@@ -127,7 +117,7 @@ async function connectWithPartner(autoConnect = false) {
     // Save connection locally
     localStorage.setItem('weatherConnection', JSON.stringify({ myToken, partnerToken }));
     
-    // Set up real-time listener for notifications with duplicate prevention
+    // Set up real-time listener for notifications
     const unsubscribe = db.collection('notifications')
       .doc(myToken)
       .collection('messages')
@@ -139,12 +129,11 @@ async function connectWithPartner(autoConnect = false) {
             const notification = change.doc.data();
             const notificationId = change.doc.id;
             
-            // Check if we've already processed this notification
             if (!processedNotifications.has(notificationId)) {
               processedNotifications.add(notificationId);
               showNotification(notification.title, notification.message);
               
-              // Clean up old notification IDs (keep only last 50)
+              // Clean up old notification IDs
               if (processedNotifications.size > 50) {
                 const idsArray = Array.from(processedNotifications);
                 processedNotifications.clear();
@@ -178,12 +167,12 @@ function showNotification(title, message) {
   if ('Notification' in window && Notification.permission === 'granted') {
     new Notification(title, {
       body: message,
-      icon: '/icons/icon-192x192.png',
-      badge: '/icons/badge-96x96.png'
+      icon: 'icons/icon-192x192.png',
+      badge: 'icons/badge-96x96.png'
     });
   }
 
-  // Also show in-app notification
+  // Always show in-app notification
   const notification = document.createElement('div');
   notification.className = 'in-app-notification';
   notification.innerHTML = `
@@ -215,17 +204,20 @@ async function sendNotificationToPartner(type) {
       'storm': '⛈️ Your partner sent you a storm alert!'
     };
 
+    const notificationData = {
+      title: 'Weather Alert',
+      message: messages[type],
+      type: type,
+      timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+      tag: `weather-${Date.now()}`,
+      fcmToken: await getFCMToken()
+    };
+
     // Add notification to partner's collection
     await db.collection('notifications')
       .doc(partnerToken)
       .collection('messages')
-      .add({
-        title: 'Weather Alert',
-        message: messages[type],
-        type: type,
-        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-        fcmToken: await getFCMToken() // Add FCM token for cloud function
-      });
+      .add(notificationData);
 
   } catch (error) {
     console.error('Error sending notification:', error);
@@ -236,12 +228,10 @@ async function sendNotificationToPartner(type) {
 // Get FCM token
 async function getFCMToken() {
   if (!messaging) return null;
-  
   try {
-    const token = await messaging.getToken({
+    return localStorage.getItem('fcmToken') || await messaging.getToken({
       vapidKey: 'BORQj7sd-9bNyPIEr7GG4PkdTFBpMULNei5E80m_v709n9Kx8njg-EnACw9L1vR8KjfaGDHrUTg4UmpqoiPtjmY'
     });
-    return token;
   } catch (error) {
     console.error('Error getting FCM token:', error);
     return null;
@@ -665,34 +655,8 @@ function loadAvailabilityData() {
   }
 }
 
-// Initialize all features
-document.addEventListener('DOMContentLoaded', function() {
-  console.log('DOM loaded, starting initialization...');
-  
-  // Initialize core weather functionality
-  loadWeather();
-  
-  // Setup push notifications
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('./sw.js');
-  }
-  
-  // Initialize hourly bar scrolling
-   setupHourlyScroll();
-  
-  // Load saved availability data
-  loadAvailabilityData();
-  
-  // Setup event listeners for hour items
-  document.addEventListener('click', function(e) {
-    // Find if click was on hour-item or its child
-    let hourElement = e.target.closest('.hour-item');
-    if (hourElement) {
-      openAvailabilityPanel(hourElement);
-    }
-  });
-  
-  // Setup event listeners for availability options
+// Setup event listeners
+function setupEventListeners() {
   document.getElementById('call-option').addEventListener('click', function() {
     toggleAvailability('call');
   });
@@ -704,6 +668,47 @@ document.addEventListener('DOMContentLoaded', function() {
   document.getElementById('clear-availability').addEventListener('click', function() {
     clearAvailability();
   });
+}
+
+// Initialize all features
+document.addEventListener('DOMContentLoaded', function() {
+  console.log('DOM loaded, starting initialization...');
+  
+  // Initialize core weather functionality
+  loadWeather();
+  
+  // Setup service worker and notifications
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker
+      .register('./firebase-messaging-sw.js')
+      .then(function(registration) {
+        console.log('Service Worker registered:', registration);
+        initializeNotifications();
+      })
+      .catch(function(error) {
+        console.error('Service Worker registration failed:', error);
+      });
+  }
+  
+  // Check for existing connection
+  const savedConnection = localStorage.getItem('weatherConnection');
+  if (savedConnection) {
+    const connection = JSON.parse(savedConnection);
+    myToken = connection.myToken;
+    partnerToken = connection.partnerToken;
+    document.getElementById('myToken').value = myToken;
+    document.getElementById('partnerToken').value = partnerToken;
+    connectWithPartner(true);
+  }
+  
+  // Initialize hourly bar scrolling
+  setupHourlyScroll();
+  
+  // Load saved availability data
+  loadAvailabilityData();
+  
+  // Setup event listeners
+  setupEventListeners();
   
   console.log('Weather dashboard initialization complete');
 });
