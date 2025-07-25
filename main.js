@@ -12,6 +12,38 @@ const firebaseConfig = {
 // Initialize Firebase
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
+const messaging = firebase.messaging.isSupported() ? firebase.messaging() : null;
+
+// Initialize notifications
+if (messaging) {
+  // Request permission and get token
+  requestNotificationPermission();
+} else {
+  console.log('Firebase messaging not supported in this browser');
+}
+
+// Request notification permission and get FCM token
+async function requestNotificationPermission() {
+  try {
+    const permission = await Notification.requestPermission();
+    if (permission === 'granted') {
+      // Get FCM token
+      const token = await messaging.getToken({
+        vapidKey: 'BORQj7sd-9bNyPIEr7GG4PkdTFBpMULNei5E80m_v709n9Kx8njg-EnACw9L1vR8KjfaGDHrUTg4UmpqoiPtjmY'
+      });
+      console.log('FCM Token:', token);
+      return token;
+    }
+  } catch (error) {
+    console.error('Error getting permission or token:', error);
+  }
+}
+
+// Handle incoming messages when app is in foreground
+messaging.onMessage((payload) => {
+  console.log('Received foreground message:', payload);
+  showNotification(payload.notification.title, payload.notification.body);
+});
 
 // Connection state
 let isConnected = false;
@@ -152,6 +184,32 @@ async function sendNotificationToPartner(type) {
         type: type,
         timestamp: firebase.firestore.FieldValue.serverTimestamp()
       });
+
+    // Send FCM notification using the messaging API directly
+    await messaging.send({
+      token: partnerToken, // FCM registration token
+      notification: {
+        title: 'Weather Alert',
+        body: messages[type]
+      },
+      webpush: {
+        headers: {
+          Urgency: 'high'
+        },
+        notification: {
+          icon: '/icon-192x192.png',
+          badge: '/badge-96x96.png',
+          vibrate: [200, 100, 200],
+          requireInteraction: true,
+          actions: [
+            {
+              action: 'open',
+              title: 'Open App'
+            }
+          ]
+        }
+      }
+    });
 
   } catch (error) {
     console.error('Error sending notification:', error);
