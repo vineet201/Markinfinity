@@ -14,12 +14,19 @@ firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 const messaging = firebase.messaging.isSupported() ? firebase.messaging() : null;
 
+// Keep track of processed notifications
+const processedNotifications = new Set();
+
 // Initialize notifications
 if (messaging) {
   // Request permission and get token
   requestNotificationPermission();
-} else {
-  console.log('Firebase messaging not supported in this browser');
+  
+  // Handle foreground messages
+  messaging.onMessage((payload) => {
+    console.log('Received foreground message:', payload);
+    showNotification(payload.notification.title, payload.notification.body);
+  });
 }
 
 // Request notification permission and get FCM token
@@ -32,18 +39,22 @@ async function requestNotificationPermission() {
         vapidKey: 'BORQj7sd-9bNyPIEr7GG4PkdTFBpMULNei5E80m_v709n9Kx8njg-EnACw9L1vR8KjfaGDHrUTg4UmpqoiPtjmY'
       });
       console.log('FCM Token:', token);
-      return token;
+      
+      // Save token to localStorage
+      localStorage.setItem('fcmToken', token);
+      
+      // Handle token refresh
+      messaging.onTokenRefresh(async () => {
+        const newToken = await messaging.getToken({
+          vapidKey: 'BORQj7sd-9bNyPIEr7GG4PkdTFBpMULNei5E80m_v709n9Kx8njg-EnACw9L1vR8KjfaGDHrUTg4UmpqoiPtjmY'
+        });
+        localStorage.setItem('fcmToken', newToken);
+      });
     }
   } catch (error) {
     console.error('Error getting permission or token:', error);
   }
 }
-
-// Handle incoming messages when app is in foreground
-messaging.onMessage((payload) => {
-  console.log('Received foreground message:', payload);
-  showNotification(payload.notification.title, payload.notification.body);
-});
 
 // Connection state
 let isConnected = false;
@@ -116,8 +127,8 @@ async function connectWithPartner(autoConnect = false) {
     // Save connection locally
     localStorage.setItem('weatherConnection', JSON.stringify({ myToken, partnerToken }));
     
-    // Set up real-time listener for notifications
-    db.collection('notifications')
+    // Set up real-time listener for notifications with duplicate prevention
+    const unsubscribe = db.collection('notifications')
       .doc(myToken)
       .collection('messages')
       .orderBy('timestamp', 'desc')
@@ -126,7 +137,20 @@ async function connectWithPartner(autoConnect = false) {
         snapshot.docChanges().forEach((change) => {
           if (change.type === 'added' && change.doc.data().timestamp) {
             const notification = change.doc.data();
-            showNotification(notification.title, notification.message);
+            const notificationId = change.doc.id;
+            
+            // Check if we've already processed this notification
+            if (!processedNotifications.has(notificationId)) {
+              processedNotifications.add(notificationId);
+              showNotification(notification.title, notification.message);
+              
+              // Clean up old notification IDs (keep only last 50)
+              if (processedNotifications.size > 50) {
+                const idsArray = Array.from(processedNotifications);
+                processedNotifications.clear();
+                idsArray.slice(-50).forEach(id => processedNotifications.add(id));
+              }
+            }
           }
         });
       });
@@ -144,14 +168,18 @@ async function connectWithPartner(autoConnect = false) {
 
 // Show notification
 function showNotification(title, message) {
-  if ('Notification' in window) {
-    Notification.requestPermission().then(function(permission) {
-      if (permission === 'granted') {
-        new Notification(title, {
-          body: message,
-          icon: '/icon-192x192.png'
-        });
-      }
+  // For mobile devices, prefer system notifications
+  if (messaging && 'serviceWorker' in navigator) {
+    // Let the service worker handle it
+    return;
+  }
+
+  // For desktop or when system notifications aren't available
+  if ('Notification' in window && Notification.permission === 'granted') {
+    new Notification(title, {
+      body: message,
+      icon: '/icons/icon-192x192.png',
+      badge: '/icons/badge-96x96.png'
     });
   }
 
