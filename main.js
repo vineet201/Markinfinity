@@ -12,70 +12,11 @@ const firebaseConfig = {
 // Initialize Firebase
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
-const messaging = firebase.messaging();
-
-// VAPID key for web push notifications
-const vapidKey = "BORQj7sd-9bNyPIEr7GG4PkdTFBpMULNei5E80m_v709n9Kx8njg-EnACw9L1vR8KjfaGDHrUTg4UmpqoiPtjmY";
-
-// Device detection
-const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-const isAndroid = /Android/i.test(navigator.userAgent);
-const androidVersion = isAndroid ? parseInt(navigator.userAgent.match(/Android\s([0-9.]+)/)[1]) : 0;
 
 // Connection state
 let isConnected = false;
 let myToken = '';
 let partnerToken = '';
-let fcmToken = null;
-
-// Debug logging
-const DEBUG = true;
-function log(...args) {
-  if (DEBUG) {
-    console.log('[Weather App]', ...args);
-    const debugLog = document.createElement('div');
-    debugLog.className = 'debug-log';
-    debugLog.textContent = args.join(' ');
-    document.body.appendChild(debugLog);
-    setTimeout(() => debugLog.remove(), 5000);
-  }
-}
-
-// Initialize notifications
-async function initializeNotifications() {
-  try {
-    // Request notification permission
-    if ('Notification' in window) {
-      const permission = await Notification.requestPermission();
-      if (permission !== 'granted') {
-        log('Notification permission denied');
-        return false;
-      }
-    }
-
-    // Register service worker
-    if ('serviceWorker' in navigator) {
-      const registration = await navigator.serviceWorker.register('/sw.js');
-      log('ServiceWorker registered');
-
-      // Get FCM token
-      try {
-        fcmToken = await messaging.getToken({ vapidKey, serviceWorkerRegistration: registration });
-        log('FCM Token obtained:', fcmToken);
-        return true;
-      } catch (error) {
-        console.error('Error getting FCM token:', error);
-        log('Error getting FCM token:', error.message);
-        return false;
-      }
-    }
-    return false;
-  } catch (error) {
-    console.error('Error initializing notifications:', error);
-    log('Error initializing notifications:', error.message);
-    return false;
-  }
-}
 
 // Check for existing connection
 const savedConnection = localStorage.getItem('weatherConnection');
@@ -87,11 +28,6 @@ if (savedConnection) {
   document.getElementById('partnerToken').value = partnerToken;
   connectWithPartner(true);
 }
-
-// Initialize notifications on page load
-initializeNotifications().then(success => {
-  log('Notification initialization:', success ? 'successful' : 'failed');
-});
 
 // Modal functions
 function openConnectModal() {
@@ -111,13 +47,6 @@ function closeConnectModal() {
   setTimeout(() => modal.classList.add('hidden'), 300);
 }
 
-// Cleanup previous connection
-function cleanupPreviousConnection() {
-  log('Cleaning up previous connection');
-  // No specific cleanup for FCM tokens here, as they are managed by the service worker
-  // and the messaging object.
-}
-
 // Connection handling
 async function connectWithPartner(autoConnect = false) {
   const myTokenInput = document.getElementById('myToken');
@@ -133,214 +62,71 @@ async function connectWithPartner(autoConnect = false) {
   }
 
   try {
-    log('Attempting to connect with partner');
-
-    // Ensure notifications are initialized
-    const notificationsReady = await initializeNotifications();
-    if (!notificationsReady) {
-      statusDiv.textContent = 'Please allow notifications to continue';
-      return;
-    }
-
-    // Store connection in Firestore with FCM token
+    // Store connection in Firestore
     await db.collection('connections').doc(myToken).set({
       partnerToken: partnerToken,
-      fcmToken: fcmToken,
-      lastUpdated: firebase.firestore.FieldValue.serverTimestamp(),
-      deviceType: isMobile ? 'mobile' : 'desktop',
-      active: true
+      lastUpdated: firebase.firestore.FieldValue.serverTimestamp()
     });
 
     // Save connection locally
     localStorage.setItem('weatherConnection', JSON.stringify({ myToken, partnerToken }));
-
-    // Listen for incoming notifications
-    messaging.onMessage((payload) => {
-      log('Received foreground message:', payload);
-      showNotification(payload.notification.title, payload.notification.body);
-    });
+    
+    // Set up real-time listener for notifications
+    db.collection('notifications')
+      .doc(myToken)
+      .collection('messages')
+      .orderBy('timestamp', 'desc')
+      .limit(1)
+      .onSnapshot((snapshot) => {
+        snapshot.docChanges().forEach((change) => {
+          if (change.type === 'added') {
+            const notification = change.doc.data();
+            showNotification(notification.title, notification.message);
+          }
+        });
+      });
 
     isConnected = true;
     statusDiv.textContent = 'Connected!';
-    log('Successfully connected');
-    
     if (!autoConnect) {
       setTimeout(closeConnectModal, 1500);
     }
   } catch (error) {
     console.error('Connection error:', error);
-    log('Connection error:', error.message);
     statusDiv.textContent = 'Connection failed. Please try again.';
-    isConnected = false;
   }
 }
 
 // Show notification
-async function showNotification(title, message) {
-  log('Showing notification:', title, message);
-  
-  try {
-    // Try to show notification through service worker
-    if ('serviceWorker' in navigator) {
-      const registration = await navigator.serviceWorker.ready;
-      await registration.showNotification(title, {
-        body: message,
-        icon: '/icon-192x192.png',
-        badge: '/badge-96x96.png',
-        vibrate: [200, 100, 200],
-        tag: 'weather-notification',
-        renotify: true,
-        requireInteraction: true
-      });
-      
-      // Add vibration for mobile devices
-      if (isMobile && 'vibrate' in navigator) {
-        navigator.vibrate([200, 100, 200]);
+function showNotification(title, message) {
+  if ('Notification' in window) {
+    Notification.requestPermission().then(function(permission) {
+      if (permission === 'granted') {
+        new Notification(title, {
+          body: message,
+          icon: '/icon-192x192.png'
+        });
       }
-    }
-  } catch (error) {
-    console.error('Error showing notification:', error);
-    log('Error showing notification:', error.message);
-    
-    // Fallback to standard notification
-    if ('Notification' in window && Notification.permission === 'granted') {
-      new Notification(title, {
-        body: message,
-        icon: '/icon-192x192.png'
-      });
-    }
-  }
-}
-
-// Standard notification method
-async function showStandardNotification(title, message) {
-  if ('Notification' in window && Notification.permission === 'granted') {
-    const notification = new Notification(title, {
-      body: message,
-      icon: '/icon-192x192.png',
-      tag: 'weather-notification',
-      renotify: true,
-      requireInteraction: true
     });
-
-    notification.onclick = () => {
-      log('Notification clicked');
-      window.focus();
-      notification.close();
-    };
   }
-}
 
-// In-app notification with enhanced mobile support
-async function showInAppNotification(title, message) {
-  // Remove existing notifications
-  const existingNotifications = document.querySelectorAll('.in-app-notification');
-  existingNotifications.forEach(notif => notif.remove());
-
-  // Create new notification
+  // Also show in-app notification
   const notification = document.createElement('div');
   notification.className = 'in-app-notification';
-  
-  // Add swipe-to-dismiss for mobile
-  if (isMobile) {
-    notification.className += ' mobile';
-  }
-
   notification.innerHTML = `
-    <div class="notification-content">
-      <h4>${title}</h4>
-      <p>${message}</p>
-    </div>
-    ${isMobile ? '<div class="notification-swipe">Swipe to dismiss</div>' : ''}
+    <h4>${title}</h4>
+    <p>${message}</p>
   `;
-
   document.body.appendChild(notification);
-
-  // Add touch event listeners for mobile swipe
-  if (isMobile) {
-    let touchStartX = 0;
-    let touchEndX = 0;
-
-    notification.addEventListener('touchstart', (e) => {
-      touchStartX = e.touches[0].clientX;
-    }, { passive: true });
-
-    notification.addEventListener('touchmove', (e) => {
-      touchEndX = e.touches[0].clientX;
-      const diff = touchStartX - touchEndX;
-      if (diff > 0) { // Only allow swipe left
-        notification.style.transform = `translateX(-${diff}px)`;
-      }
-    }, { passive: true });
-
-    notification.addEventListener('touchend', () => {
-      const diff = touchStartX - touchEndX;
-      if (diff > 100) { // Swipe threshold
-        notification.style.transform = 'translateX(-100%)';
-        setTimeout(() => notification.remove(), 300);
-      } else {
-        notification.style.transform = '';
-      }
-    });
-  }
-
-  // Show notification with animation
-  await new Promise(resolve => {
+  
+  setTimeout(() => {
+    notification.classList.add('show');
     setTimeout(() => {
-      notification.classList.add('show');
-      setTimeout(() => {
-        if (!isMobile) { // Auto-dismiss only on desktop
-          notification.classList.remove('show');
-          setTimeout(() => {
-            notification.remove();
-            resolve();
-          }, 300);
-        } else {
-          resolve();
-        }
-      }, 5000);
-    }, 100);
-  });
+      notification.classList.remove('show');
+      setTimeout(() => notification.remove(), 300);
+    }, 3000);
+  }, 100);
 }
-
-// Update the styles for mobile notifications
-const mobileStyles = `
-  .in-app-notification.mobile {
-    bottom: 20px;
-    top: auto;
-    left: 50%;
-    right: auto;
-    transform: translateX(-50%);
-    width: 90%;
-    max-width: 400px;
-    border-radius: 15px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    transition: transform 0.3s ease;
-  }
-
-  .in-app-notification.mobile .notification-content {
-    padding: 15px;
-  }
-
-  .in-app-notification.mobile .notification-swipe {
-    text-align: center;
-    padding: 5px;
-    font-size: 12px;
-    color: #666;
-    border-top: 1px solid #eee;
-  }
-
-  .debug-log {
-    bottom: ${isMobile ? '80px' : '10px'};
-    background: rgba(0, 0, 0, 0.8);
-    padding: 8px 12px;
-    max-width: 90%;
-    word-break: break-word;
-  }
-`;
-
-const existingStyle = document.querySelector('style');
-existingStyle.textContent += mobileStyles;
 
 // Send notification to partner
 async function sendNotificationToPartner(type) {
@@ -350,73 +136,25 @@ async function sendNotificationToPartner(type) {
   }
 
   try {
-    log('Sending notification to partner:', type);
-    
     const messages = {
       'sunny': '☀️ Your partner sent you a sunny day alert!',
       'rain': '🌧️ Your partner sent you a rainy day alert!',
       'storm': '⛈️ Your partner sent you a storm alert!'
     };
 
-    // Check if partner exists and is active
-    const partnerDoc = await db.collection('connections').doc(partnerToken).get();
-    if (!partnerDoc.exists) {
-      alert('Partner not found. Ask them to connect first.');
-      log('Partner not found');
-      return;
-    }
-
-    const partnerData = partnerDoc.data();
-    if (!partnerData.active || !partnerData.fcmToken) {
-      alert('Partner is not currently active. Ask them to reconnect.');
-      log('Partner is inactive or missing FCM token');
-      return;
-    }
-
-    // Send notification through cloud function
-    const functionUrl = 'https://us-central1-weather-notify-8bf63.cloudfunctions.net/sendPushNotification';
-    
-    try {
-      const response = await fetch(functionUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          token: partnerData.fcmToken,
-          title: 'Weather Alert',
-          body: messages[type],
-          type: type
-        })
+    // Add notification to partner's collection
+    await db.collection('notifications')
+      .doc(partnerToken)
+      .collection('messages')
+      .add({
+        title: 'Weather Alert',
+        message: messages[type],
+        type: type,
+        timestamp: firebase.firestore.FieldValue.serverTimestamp()
       });
-
-      if (!response.ok) {
-        throw new Error('Failed to send notification');
-      }
-
-      log('Push notification sent successfully');
-      
-    } catch (error) {
-      console.error('Push notification error:', error);
-      log('Push notification error:', error.message);
-      
-      // Fallback: Store in Firestore
-      await db.collection('notifications')
-        .doc(partnerToken)
-        .collection('messages')
-        .add({
-          title: 'Weather Alert',
-          message: messages[type],
-          type: type,
-          timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-          sender: myToken
-        });
-      log('Notification stored in Firestore as fallback');
-    }
 
   } catch (error) {
     console.error('Error sending notification:', error);
-    log('Error sending notification:', error.message);
     alert('Failed to send notification');
   }
 }
@@ -446,16 +184,9 @@ function sendMood(type) {
   
   // Try to send to backend, but work offline if needed
   try {
-    // This part of the code was not updated in the new_code, so it remains as is.
-    // The original code had a fetch call here, but the new_code removed the backendUrl.
-    // Assuming the intent was to remove the backend call or that the backendUrl is no longer needed.
-    // For now, keeping the original logic as is, but noting the potential issue.
-    // If backendUrl is not defined, this will cause an error.
-    // Assuming backendUrl was intended to be defined elsewhere or removed.
-    // For now, commenting out the fetch call to avoid errors.
-    // fetch(`${backendUrl}/send?type=${type}&mood=true`).catch(() => {
-    //   console.log('Backend unavailable - mood stored locally');
-    // });
+    fetch(`${backendUrl}/send?type=${type}&mood=true`).catch(() => {
+      console.log('Backend unavailable - mood stored locally');
+    });
   } catch (e) {
     console.log('Offline mode - moods stored locally');
   }
@@ -853,7 +584,9 @@ document.addEventListener('DOMContentLoaded', function() {
   loadWeather();
   
   // Setup push notifications
-  // The initializeNotifications function now handles this.
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js');
+  }
   
   // Initialize hourly bar scrolling
    setupHourlyScroll();
