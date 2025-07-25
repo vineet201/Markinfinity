@@ -2,22 +2,24 @@
   "name": "Weather Dashboard",
   "short_name": "Weather",
   "description": "A weather dashboard with real-time updates and partner connectivity",
-  "start_url": "/",
+  "start_url": "https://vineet201.github.io/weather/",
+  "scope": "https://vineet201.github.io/weather/",
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#e0f7fa",
   "orientation": "portrait",
-  "scope": "./",
   "icons": [
     {
-      "src": "icon-192x192.png",
+      "src": "icons/icon-192x192.png",
       "sizes": "192x192",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any maskable"
     },
     {
-      "src": "icon-512x512.png",
+      "src": "icons/icon-512x512.png",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any maskable"
     }
   ],
   "gcm_sender_id": "541861104637",

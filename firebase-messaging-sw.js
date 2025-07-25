@@ -24,7 +24,7 @@ messaging.onBackgroundMessage((payload) => {
     badge: '/badge-96x96.png',
     vibrate: [200, 100, 200],
     data: {
-      url: payload.notification.click_action || '/'
+      url: 'https://vineet201.github.io/weather/'
     }
   };
 

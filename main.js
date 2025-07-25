@@ -94,6 +94,19 @@ async function connectWithPartner(autoConnect = false) {
   }
 
   try {
+    // Clear old notifications first
+    const oldNotifications = await db.collection('notifications')
+      .doc(myToken)
+      .collection('messages')
+      .get();
+
+    // Delete old notifications
+    const batch = db.batch();
+    oldNotifications.docs.forEach((doc) => {
+      batch.delete(doc.ref);
+    });
+    await batch.commit();
+
     // Store connection in Firestore
     await db.collection('connections').doc(myToken).set({
       partnerToken: partnerToken,
@@ -111,7 +124,7 @@ async function connectWithPartner(autoConnect = false) {
       .limit(1)
       .onSnapshot((snapshot) => {
         snapshot.docChanges().forEach((change) => {
-          if (change.type === 'added') {
+          if (change.type === 'added' && change.doc.data().timestamp) {
             const notification = change.doc.data();
             showNotification(notification.title, notification.message);
           }
@@ -182,38 +195,28 @@ async function sendNotificationToPartner(type) {
         title: 'Weather Alert',
         message: messages[type],
         type: type,
-        timestamp: firebase.firestore.FieldValue.serverTimestamp()
+        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+        fcmToken: await getFCMToken() // Add FCM token for cloud function
       });
-
-    // Send FCM notification using the messaging API directly
-    await messaging.send({
-      token: partnerToken, // FCM registration token
-      notification: {
-        title: 'Weather Alert',
-        body: messages[type]
-      },
-      webpush: {
-        headers: {
-          Urgency: 'high'
-        },
-        notification: {
-          icon: '/icon-192x192.png',
-          badge: '/badge-96x96.png',
-          vibrate: [200, 100, 200],
-          requireInteraction: true,
-          actions: [
-            {
-              action: 'open',
-              title: 'Open App'
-            }
-          ]
-        }
-      }
-    });
 
   } catch (error) {
     console.error('Error sending notification:', error);
     alert('Failed to send notification');
+  }
+}
+
+// Get FCM token
+async function getFCMToken() {
+  if (!messaging) return null;
+  
+  try {
+    const token = await messaging.getToken({
+      vapidKey: 'BORQj7sd-9bNyPIEr7GG4PkdTFBpMULNei5E80m_v709n9Kx8njg-EnACw9L1vR8KjfaGDHrUTg4UmpqoiPtjmY'
+    });
+    return token;
+  } catch (error) {
+    console.error('Error getting FCM token:', error);
+    return null;
   }
 }
 
