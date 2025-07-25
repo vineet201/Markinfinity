@@ -20,11 +20,11 @@ messaging.onBackgroundMessage((payload) => {
   const notificationTitle = payload.notification.title;
   const notificationOptions = {
     body: payload.notification.body,
-    icon: '/icon-192x192.png',
-    badge: '/badge-96x96.png',
+    icon: '/icons/icon-192x192.png',
+    badge: '/icons/badge-96x96.png',
     vibrate: [200, 100, 200],
     data: {
-      url: 'https://vineet201.github.io/weather/'
+      url: 'https://vineet201.github.io/Markinfinity/'
     }
   };
 
