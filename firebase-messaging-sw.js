@@ -1,34 +1,26 @@
-importScripts('https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js');
-importScripts('https://www.gstatic.com/firebasejs/8.10.1/firebase-messaging.js');
+// Cache static assets
+const CACHE_NAME = 'weather-app-v3';
+const urlsToCache = [
+  '/',
+  '/index.html',
+  '/styles.css',
+  '/main.js',
+  '/manifest.json',
+  '/icons/icon-192x192.png',
+  '/icons/icon-512x512.png',
+  '/icons/badge-96x96.png'
+];
 
-firebase.initializeApp({
-  apiKey: "AIzaSyD2rYBmr5fu2HEkZJ-6OKUx6XQUcs9Ppg0",
-  authDomain: "weather-notify-8bf63.firebaseapp.com",
-  projectId: "weather-notify-8bf63",
-  storageBucket: "weather-notify-8bf63.appspot.com",
-  messagingSenderId: "541861104637",
-  appId: "1:541861104637:web:f6307953860e1eaff96794",
-  measurementId: "G-B9KXD8XYS6"
+self.addEventListener('install', (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME)
+      .then((cache) => cache.addAll(urlsToCache))
+  );
 });
 
-const messaging = firebase.messaging();
-
-messaging.onBackgroundMessage((payload) => {
-  console.log('Received background message:', payload);
-  
-  const notificationOptions = {
-    body: payload.data.message || payload.notification.body,
-    icon: 'icons/icon-192x192.png',
-    badge: 'icons/badge-96x96.png',
-    vibrate: [200, 100, 200],
-    tag: payload.data.tag || 'weather-notification',
-    data: {
-      url: 'https://vineet201.github.io/Markinfinity/'
-    }
-  };
-
-  return self.registration.showNotification(
-    payload.data.title || payload.notification.title,
-    notificationOptions
+self.addEventListener('fetch', (event) => {
+  event.respondWith(
+    caches.match(event.request)
+      .then((response) => response || fetch(event.request))
   );
 }); 

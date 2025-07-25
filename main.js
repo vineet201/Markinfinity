@@ -157,22 +157,7 @@ async function connectWithPartner(autoConnect = false) {
 
 // Show notification
 function showNotification(title, message) {
-  // For mobile devices, prefer system notifications
-  if (messaging && 'serviceWorker' in navigator) {
-    // Let the service worker handle it
-    return;
-  }
-
-  // For desktop or when system notifications aren't available
-  if ('Notification' in window && Notification.permission === 'granted') {
-    new Notification(title, {
-      body: message,
-      icon: 'icons/icon-192x192.png',
-      badge: 'icons/badge-96x96.png'
-    });
-  }
-
-  // Always show in-app notification
+  // Show in-app notification
   const notification = document.createElement('div');
   notification.className = 'in-app-notification';
   notification.innerHTML = `
@@ -188,6 +173,9 @@ function showNotification(title, message) {
       setTimeout(() => notification.remove(), 300);
     }, 3000);
   }, 100);
+
+  // Also log the notification
+  console.log('Notification:', { title, message });
 }
 
 // Send notification to partner
@@ -204,20 +192,16 @@ async function sendNotificationToPartner(type) {
       'storm': '⛈️ Your partner sent you a storm alert!'
     };
 
-    const notificationData = {
-      title: 'Weather Alert',
-      message: messages[type],
-      type: type,
-      timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-      tag: `weather-${Date.now()}`,
-      fcmToken: await getFCMToken()
-    };
-
     // Add notification to partner's collection
     await db.collection('notifications')
       .doc(partnerToken)
       .collection('messages')
-      .add(notificationData);
+      .add({
+        title: 'Weather Alert',
+        message: messages[type],
+        type: type,
+        timestamp: firebase.firestore.FieldValue.serverTimestamp()
+      });
 
   } catch (error) {
     console.error('Error sending notification:', error);
