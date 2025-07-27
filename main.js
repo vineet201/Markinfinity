@@ -58,20 +58,6 @@ async function connectWithPartner(autoConnect = false) {
       lastUpdated: new Date()
     });
 
-    // Register with OneSignal and store player ID
-    if (window.OneSignal) {
-      window.OneSignal.User.getId().then(async (playerId) => {
-        if (playerId) {
-          // Save playerId in Firestore under user token
-          await setDoc(connectionsRef, {
-            onesignalPlayerId: playerId
-          }, { merge: true });
-          // Save locally
-          localStorage.setItem('onesignalPlayerId', playerId);
-        }
-      });
-    }
-
     // Save connection locally
     localStorage.setItem('weatherConnection', JSON.stringify({ myToken, partnerToken }));
     
@@ -138,7 +124,7 @@ async function sendNotificationToPartner(type) {
   }
 
   try {
-    const { collection, doc, addDoc, getDoc } = window.firestoreCollections;
+    const { collection, doc, addDoc } = window.firestoreCollections;
     
     const messages = {
       'sunny': '☀️ Your partner sent you a sunny day alert!',
@@ -146,7 +132,7 @@ async function sendNotificationToPartner(type) {
       'storm': '⛈️ Your partner sent you a storm alert!'
     };
 
-    // Add notification to partner's collection (Firestore)
+    // Add notification to partner's collection
     const notificationsRef = collection(doc(collection(window.db, 'notifications'), partnerToken), 'messages');
     await addDoc(notificationsRef, {
       title: 'Weather Alert',
@@ -154,34 +140,6 @@ async function sendNotificationToPartner(type) {
       type: type,
       timestamp: new Date()
     });
-
-    // Try to send via OneSignal if available
-    if (window.OneSignal && window.db) {
-      // Get partner's OneSignal player ID from Firestore
-      const { getFirestore, doc, getDoc } = window.firestoreCollections;
-      const partnerDocRef = doc(window.db, 'connections', partnerToken);
-      const partnerDocSnap = await getDoc(partnerDocRef);
-      if (partnerDocSnap.exists()) {
-        const partnerData = partnerDocSnap.data();
-        if (partnerData.onesignalPlayerId) {
-          // Send notification via OneSignal REST API
-          const onesignalApiKey = 'os_v2_app_egho33l34zhepbewlcvbmqf4wt7yporvsbke4hnbz4zasto2m5fh7kqtrygi4aofvfajktzb6mkudzds6lppp2ntwkiuwrf5vthy23q'; // <-- Your REST API Key
-          await fetch('https://onesignal.com/api/v1/notifications', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Basic ' + onesignalApiKey
-            },
-            body: JSON.stringify({
-              app_id: '218eeded-7be6-4e47-8496-58aa1640bcb4',
-              include_player_ids: [partnerData.onesignalPlayerId],
-              headings: { en: 'Weather Alert' },
-              contents: { en: messages[type] }
-            })
-          });
-        }
-      }
-    }
 
   } catch (error) {
     console.error('Error sending notification:', error);

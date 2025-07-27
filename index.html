@@ -43,19 +43,8 @@
       limit
     };
   </script>
-  <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
-  <script>
-    window.OneSignalDeferred = window.OneSignalDeferred || [];
-    OneSignalDeferred.push(async function(OneSignal) {
-      await OneSignal.init({
-        appId: "218eeded-7be6-4e47-8496-58aa1640bcb4",
-      });
-      window.OneSignal = OneSignal;
-    });
-  </script>
 </head>
 <body>
-  <div style="position:fixed;top:8px;right:12px;font-size:0.85rem;color:#888;z-index:2000;pointer-events:none;user-select:none;">v11</div>
   <div id="bg-animation" class="background"></div>
 
   <!-- Mood Modal (glassmorphic, animated) -->
