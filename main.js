@@ -1,17 +1,4 @@
-// Firebase Configuration
-const firebaseConfig = {
-  apiKey: "AIzaSyD2rYBmr5fu2HEkZJ-6OKUx6XQUcs9Ppg0",
-  authDomain: "weather-notify-8bf63.firebaseapp.com",
-  projectId: "weather-notify-8bf63",
-  storageBucket: "weather-notify-8bf63.appspot.com",
-  messagingSenderId: "541861104637",
-  appId: "1:541861104637:web:f6307953860e1eaff96794",
-  measurementId: "G-B9KXD8XYS6"
-};
-
-// Initialize Firebase
-firebase.initializeApp(firebaseConfig);
-const db = firebase.firestore();
+// Firebase Configuration and Initialization is now in index.html
 
 // Connection state
 let isConnected = false;
@@ -47,8 +34,8 @@ function closeConnectModal() {
   setTimeout(() => modal.classList.add('hidden'), 300);
 }
 
-// Connection handling
-async function connectWithPartner(autoConnect = false) {
+// Connection handling (local only, no backend)
+function connectWithPartner(autoConnect = false) {
   const myTokenInput = document.getElementById('myToken');
   const partnerTokenInput = document.getElementById('partnerToken');
   const statusDiv = document.getElementById('connectionStatus');
@@ -61,53 +48,25 @@ async function connectWithPartner(autoConnect = false) {
     return;
   }
 
-  try {
-    // Store connection in Firestore
-    await db.collection('connections').doc(myToken).set({
-      partnerToken: partnerToken,
-      lastUpdated: firebase.firestore.FieldValue.serverTimestamp()
-    });
-
-    // Save connection locally
-    localStorage.setItem('weatherConnection', JSON.stringify({ myToken, partnerToken }));
-    
-    // Set up real-time listener for notifications
-    db.collection('notifications')
-      .doc(myToken)
-      .collection('messages')
-      .orderBy('timestamp', 'desc')
-      .limit(1)
-      .onSnapshot((snapshot) => {
-        snapshot.docChanges().forEach((change) => {
-          if (change.type === 'added') {
-            const notification = change.doc.data();
-            showNotification(notification.title, notification.message);
-          }
-        });
-      });
-
-    isConnected = true;
-    statusDiv.textContent = 'Connected!';
-    if (!autoConnect) {
-      setTimeout(closeConnectModal, 1500);
-    }
-  } catch (error) {
-    console.error('Connection error:', error);
-    statusDiv.textContent = 'Connection failed. Please try again.';
+  // Save connection locally
+  localStorage.setItem('weatherConnection', JSON.stringify({ myToken, partnerToken }));
+  isConnected = true;
+  statusDiv.textContent = 'Connected!';
+  if (!autoConnect) {
+    setTimeout(closeConnectModal, 1500);
   }
 }
 
-// Show notification
+// Show notification using OneSignal (for current user only)
 function showNotification(title, message) {
-  if ('Notification' in window) {
-    Notification.requestPermission().then(function(permission) {
-      if (permission === 'granted') {
-        new Notification(title, {
-          body: message,
-          icon: '/icon-192x192.png'
-        });
+  if (window.OneSignal) {
+    window.OneSignal.Notifications.showNotification(
+      {
+        title: title,
+        message: message,
+        icon: '/icon-192x192.png',
       }
-    });
+    );
   }
 
   // Also show in-app notification
@@ -128,35 +87,22 @@ function showNotification(title, message) {
   }, 100);
 }
 
-// Send notification to partner
-async function sendNotificationToPartner(type) {
+// Send notification to partner (requires backend integration)
+function sendNotificationToPartner(type) {
   if (!isConnected) {
     alert('Please connect with your partner first');
     return;
   }
 
-  try {
-    const messages = {
-      'sunny': '☀️ Your partner sent you a sunny day alert!',
-      'rain': '🌧️ Your partner sent you a rainy day alert!',
-      'storm': '⛈️ Your partner sent you a storm alert!'
-    };
+  const messages = {
+    'sunny': '☀️ Your partner sent you a sunny day alert!',
+    'rain': '🌧️ Your partner sent you a rainy day alert!',
+    'storm': '⛈️ Your partner sent you a storm alert!'
+  };
 
-    // Add notification to partner's collection
-    await db.collection('notifications')
-      .doc(partnerToken)
-      .collection('messages')
-      .add({
-        title: 'Weather Alert',
-        message: messages[type],
-        type: type,
-        timestamp: firebase.firestore.FieldValue.serverTimestamp()
-      });
-
-  } catch (error) {
-    console.error('Error sending notification:', error);
-    alert('Failed to send notification');
-  }
+  // NOTE: To send a notification to a partner, you must call the OneSignal REST API from your backend.
+  // Here, we only show a notification to the current user for demonstration.
+  showNotification('Weather Alert', messages[type]);
 }
 
 // Enhanced weather map with romantic locations
