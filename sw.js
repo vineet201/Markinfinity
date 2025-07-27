@@ -1,5 +1,5 @@
 // Cache static assets
-const CACHE_NAME = 'weather-app-v3';
+const CACHE_NAME = 'weather-app-v1';
 const urlsToCache = [
   '/',
   '/index.html',
@@ -22,33 +22,5 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(
     caches.match(event.request)
       .then((response) => response || fetch(event.request))
-  );
-});
-
-// Handle push notifications
-self.addEventListener('push', (event) => {
-  if (event.data) {
-    const data = event.data.json();
-    const options = {
-      body: data.message,
-      icon: '/icon-192x192.png',
-      badge: '/badge-96x96.png',
-      vibrate: [200, 100, 200],
-      data: {
-        url: data.url || '/'
-      }
-    };
-
-    event.waitUntil(
-      self.registration.showNotification(data.title, options)
-    );
-  }
-});
-
-// Handle notification click
-self.addEventListener('notificationclick', (event) => {
-  event.notification.close();
-  event.waitUntil(
-    clients.openWindow(event.notification.data.url)
   );
 });

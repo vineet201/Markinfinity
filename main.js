@@ -12,40 +12,6 @@ const firebaseConfig = {
 // Initialize Firebase
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
-const messaging = firebase.messaging.isSupported() ? firebase.messaging() : null;
-
-// Keep track of processed notifications
-const processedNotifications = new Set();
-
-// Initialize notifications
-async function initializeNotifications() {
-  if (!messaging) {
-    console.log('Firebase messaging not supported');
-    return;
-  }
-
-  try {
-    const permission = await Notification.requestPermission();
-    if (permission === 'granted') {
-      const token = await messaging.getToken({
-        vapidKey: 'BORQj7sd-9bNyPIEr7GG4PkdTFBpMULNei5E80m_v709n9Kx8njg-EnACw9L1vR8KjfaGDHrUTg4UmpqoiPtjmY'
-      });
-      console.log('FCM Token:', token);
-      localStorage.setItem('fcmToken', token);
-    }
-  } catch (error) {
-    console.error('Error initializing notifications:', error);
-  }
-
-  // Handle foreground messages
-  messaging.onMessage((payload) => {
-    console.log('Received foreground message:', payload);
-    showNotification(
-      payload.data.title || payload.notification.title,
-      payload.data.message || payload.notification.body
-    );
-  });
-}
 
 // Connection state
 let isConnected = false;
@@ -96,18 +62,6 @@ async function connectWithPartner(autoConnect = false) {
   }
 
   try {
-    // Clear old notifications
-    const oldNotifications = await db.collection('notifications')
-      .doc(myToken)
-      .collection('messages')
-      .get();
-
-    const batch = db.batch();
-    oldNotifications.docs.forEach((doc) => {
-      batch.delete(doc.ref);
-    });
-    await batch.commit();
-
     // Store connection in Firestore
     await db.collection('connections').doc(myToken).set({
       partnerToken: partnerToken,
@@ -118,28 +72,16 @@ async function connectWithPartner(autoConnect = false) {
     localStorage.setItem('weatherConnection', JSON.stringify({ myToken, partnerToken }));
     
     // Set up real-time listener for notifications
-    const unsubscribe = db.collection('notifications')
+    db.collection('notifications')
       .doc(myToken)
       .collection('messages')
       .orderBy('timestamp', 'desc')
       .limit(1)
       .onSnapshot((snapshot) => {
         snapshot.docChanges().forEach((change) => {
-          if (change.type === 'added' && change.doc.data().timestamp) {
+          if (change.type === 'added') {
             const notification = change.doc.data();
-            const notificationId = change.doc.id;
-            
-            if (!processedNotifications.has(notificationId)) {
-              processedNotifications.add(notificationId);
-              showNotification(notification.title, notification.message);
-              
-              // Clean up old notification IDs
-              if (processedNotifications.size > 50) {
-                const idsArray = Array.from(processedNotifications);
-                processedNotifications.clear();
-                idsArray.slice(-50).forEach(id => processedNotifications.add(id));
-              }
-            }
+            showNotification(notification.title, notification.message);
           }
         });
       });
@@ -157,7 +99,18 @@ async function connectWithPartner(autoConnect = false) {
 
 // Show notification
 function showNotification(title, message) {
-  // Show in-app notification
+  if ('Notification' in window) {
+    Notification.requestPermission().then(function(permission) {
+      if (permission === 'granted') {
+        new Notification(title, {
+          body: message,
+          icon: '/icon-192x192.png'
+        });
+      }
+    });
+  }
+
+  // Also show in-app notification
   const notification = document.createElement('div');
   notification.className = 'in-app-notification';
   notification.innerHTML = `
@@ -173,9 +126,6 @@ function showNotification(title, message) {
       setTimeout(() => notification.remove(), 300);
     }, 3000);
   }, 100);
-
-  // Also log the notification
-  console.log('Notification:', { title, message });
 }
 
 // Send notification to partner
@@ -206,19 +156,6 @@ async function sendNotificationToPartner(type) {
   } catch (error) {
     console.error('Error sending notification:', error);
     alert('Failed to send notification');
-  }
-}
-
-// Get FCM token
-async function getFCMToken() {
-  if (!messaging) return null;
-  try {
-    return localStorage.getItem('fcmToken') || await messaging.getToken({
-      vapidKey: 'BORQj7sd-9bNyPIEr7GG4PkdTFBpMULNei5E80m_v709n9Kx8njg-EnACw9L1vR8KjfaGDHrUTg4UmpqoiPtjmY'
-    });
-  } catch (error) {
-    console.error('Error getting FCM token:', error);
-    return null;
   }
 }
 
@@ -639,8 +576,34 @@ function loadAvailabilityData() {
   }
 }
 
-// Setup event listeners
-function setupEventListeners() {
+// Initialize all features
+document.addEventListener('DOMContentLoaded', function() {
+  console.log('DOM loaded, starting initialization...');
+  
+  // Initialize core weather functionality
+  loadWeather();
+  
+  // Setup push notifications
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js');
+  }
+  
+  // Initialize hourly bar scrolling
+   setupHourlyScroll();
+  
+  // Load saved availability data
+  loadAvailabilityData();
+  
+  // Setup event listeners for hour items
+  document.addEventListener('click', function(e) {
+    // Find if click was on hour-item or its child
+    let hourElement = e.target.closest('.hour-item');
+    if (hourElement) {
+      openAvailabilityPanel(hourElement);
+    }
+  });
+  
+  // Setup event listeners for availability options
   document.getElementById('call-option').addEventListener('click', function() {
     toggleAvailability('call');
   });
@@ -652,47 +615,6 @@ function setupEventListeners() {
   document.getElementById('clear-availability').addEventListener('click', function() {
     clearAvailability();
   });
-}
-
-// Initialize all features
-document.addEventListener('DOMContentLoaded', function() {
-  console.log('DOM loaded, starting initialization...');
-  
-  // Initialize core weather functionality
-  loadWeather();
-  
-  // Setup service worker and notifications
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker
-      .register('./firebase-messaging-sw.js')
-      .then(function(registration) {
-        console.log('Service Worker registered:', registration);
-        initializeNotifications();
-      })
-      .catch(function(error) {
-        console.error('Service Worker registration failed:', error);
-      });
-  }
-  
-  // Check for existing connection
-  const savedConnection = localStorage.getItem('weatherConnection');
-  if (savedConnection) {
-    const connection = JSON.parse(savedConnection);
-    myToken = connection.myToken;
-    partnerToken = connection.partnerToken;
-    document.getElementById('myToken').value = myToken;
-    document.getElementById('partnerToken').value = partnerToken;
-    connectWithPartner(true);
-  }
-  
-  // Initialize hourly bar scrolling
-  setupHourlyScroll();
-  
-  // Load saved availability data
-  loadAvailabilityData();
-  
-  // Setup event listeners
-  setupEventListeners();
   
   console.log('Weather dashboard initialization complete');
 });
