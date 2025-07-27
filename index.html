@@ -7,8 +7,42 @@
   <link rel="stylesheet" href="styles.css" />
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#e0f7fa">
-  
-  <!-- OneSignal SDK -->
+  <!-- Firebase SDK -->
+  <script type="module">
+    // Import the functions you need from the SDKs you need
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js";
+    import { getFirestore, collection, doc, setDoc, addDoc, onSnapshot, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
+    import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-analytics.js";
+
+    // Your web app's Firebase configuration
+    const firebaseConfig = {
+      apiKey: "AIzaSyD2rYBmr5fu2HEkZJ-6OKUx6XQUcs9Ppg0",
+      authDomain: "weather-notify-8bf63.firebaseapp.com",
+      projectId: "weather-notify-8bf63",
+      storageBucket: "weather-notify-8bf63.firebasestorage.app",
+      messagingSenderId: "541861104637",
+      appId: "1:541861104637:web:f6307953860e1eaff96794",
+      measurementId: "G-B9KXD8XYS6"
+    };
+
+    // Initialize Firebase
+    const app = initializeApp(firebaseConfig);
+    const analytics = getAnalytics(app);
+    const db = getFirestore(app);
+
+    // Make Firebase services and methods available globally
+    window.db = db;
+    window.firestoreCollections = {
+      collection,
+      doc,
+      setDoc,
+      addDoc,
+      onSnapshot,
+      query,
+      orderBy,
+      limit
+    };
+  </script>
   <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
   <script>
     window.OneSignalDeferred = window.OneSignalDeferred || [];
@@ -16,6 +50,7 @@
       await OneSignal.init({
         appId: "218eeded-7be6-4e47-8496-58aa1640bcb4",
       });
+      window.OneSignal = OneSignal;
     });
   </script>
 </head>

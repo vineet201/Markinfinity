@@ -34,8 +34,8 @@ function closeConnectModal() {
   setTimeout(() => modal.classList.add('hidden'), 300);
 }
 
-// Connection handling (local only, no backend)
-function connectWithPartner(autoConnect = false) {
+// Connection handling
+async function connectWithPartner(autoConnect = false) {
   const myTokenInput = document.getElementById('myToken');
   const partnerTokenInput = document.getElementById('partnerToken');
   const statusDiv = document.getElementById('connectionStatus');
@@ -48,25 +48,68 @@ function connectWithPartner(autoConnect = false) {
     return;
   }
 
-  // Save connection locally
-  localStorage.setItem('weatherConnection', JSON.stringify({ myToken, partnerToken }));
-  isConnected = true;
-  statusDiv.textContent = 'Connected!';
-  if (!autoConnect) {
-    setTimeout(closeConnectModal, 1500);
+  try {
+    const { collection, doc, setDoc, onSnapshot, query, orderBy, limit } = window.firestoreCollections;
+    
+    // Store connection in Firestore
+    const connectionsRef = doc(collection(window.db, 'connections'), myToken);
+    await setDoc(connectionsRef, {
+      partnerToken: partnerToken,
+      lastUpdated: new Date()
+    });
+
+    // Register with OneSignal and store player ID
+    if (window.OneSignal) {
+      window.OneSignal.User.getId().then(async (playerId) => {
+        if (playerId) {
+          // Save playerId in Firestore under user token
+          await setDoc(connectionsRef, {
+            onesignalPlayerId: playerId
+          }, { merge: true });
+          // Save locally
+          localStorage.setItem('onesignalPlayerId', playerId);
+        }
+      });
+    }
+
+    // Save connection locally
+    localStorage.setItem('weatherConnection', JSON.stringify({ myToken, partnerToken }));
+    
+    // Set up real-time listener for notifications
+    const notificationsRef = collection(doc(collection(window.db, 'notifications'), myToken), 'messages');
+    const notificationsQuery = query(notificationsRef, orderBy('timestamp', 'desc'), limit(1));
+    
+    onSnapshot(notificationsQuery, (snapshot) => {
+      snapshot.docChanges().forEach((change) => {
+        if (change.type === 'added') {
+          const notification = change.doc.data();
+          showNotification(notification.title, notification.message);
+        }
+      });
+    });
+
+    isConnected = true;
+    statusDiv.textContent = 'Connected!';
+    if (!autoConnect) {
+      setTimeout(closeConnectModal, 1500);
+    }
+  } catch (error) {
+    console.error('Connection error:', error);
+    statusDiv.textContent = 'Connection failed. Please try again.';
   }
 }
 
-// Show notification using OneSignal (for current user only)
+// Show notification
 function showNotification(title, message) {
-  if (window.OneSignal) {
-    window.OneSignal.Notifications.showNotification(
-      {
-        title: title,
-        message: message,
-        icon: '/icon-192x192.png',
+  if ('Notification' in window) {
+    Notification.requestPermission().then(function(permission) {
+      if (permission === 'granted') {
+        new Notification(title, {
+          body: message,
+          icon: '/icon-192x192.png'
+        });
       }
-    );
+    });
   }
 
   // Also show in-app notification
@@ -87,22 +130,63 @@ function showNotification(title, message) {
   }, 100);
 }
 
-// Send notification to partner (requires backend integration)
-function sendNotificationToPartner(type) {
+// Send notification to partner
+async function sendNotificationToPartner(type) {
   if (!isConnected) {
     alert('Please connect with your partner first');
     return;
   }
 
-  const messages = {
-    'sunny': '☀️ Your partner sent you a sunny day alert!',
-    'rain': '🌧️ Your partner sent you a rainy day alert!',
-    'storm': '⛈️ Your partner sent you a storm alert!'
-  };
+  try {
+    const { collection, doc, addDoc, getDoc } = window.firestoreCollections;
+    
+    const messages = {
+      'sunny': '☀️ Your partner sent you a sunny day alert!',
+      'rain': '🌧️ Your partner sent you a rainy day alert!',
+      'storm': '⛈️ Your partner sent you a storm alert!'
+    };
 
-  // NOTE: To send a notification to a partner, you must call the OneSignal REST API from your backend.
-  // Here, we only show a notification to the current user for demonstration.
-  showNotification('Weather Alert', messages[type]);
+    // Add notification to partner's collection (Firestore)
+    const notificationsRef = collection(doc(collection(window.db, 'notifications'), partnerToken), 'messages');
+    await addDoc(notificationsRef, {
+      title: 'Weather Alert',
+      message: messages[type],
+      type: type,
+      timestamp: new Date()
+    });
+
+    // Try to send via OneSignal if available
+    if (window.OneSignal && window.db) {
+      // Get partner's OneSignal player ID from Firestore
+      const { getFirestore, doc, getDoc } = window.firestoreCollections;
+      const partnerDocRef = doc(window.db, 'connections', partnerToken);
+      const partnerDocSnap = await getDoc(partnerDocRef);
+      if (partnerDocSnap.exists()) {
+        const partnerData = partnerDocSnap.data();
+        if (partnerData.onesignalPlayerId) {
+          // Send notification via OneSignal REST API
+          const onesignalApiKey = 'os_v2_app_egho33l34zhepbewlcvbmqf4wt7yporvsbke4hnbz4zasto2m5fh7kqtrygi4aofvfajktzb6mkudzds6lppp2ntwkiuwrf5vthy23q'; // <-- Your REST API Key
+          await fetch('https://onesignal.com/api/v1/notifications', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Basic ' + onesignalApiKey
+            },
+            body: JSON.stringify({
+              app_id: '218eeded-7be6-4e47-8496-58aa1640bcb4',
+              include_player_ids: [partnerData.onesignalPlayerId],
+              headings: { en: 'Weather Alert' },
+              contents: { en: messages[type] }
+            })
+          });
+        }
+      }
+    }
+
+  } catch (error) {
+    console.error('Error sending notification:', error);
+    alert('Failed to send notification');
+  }
 }
 
 // Enhanced weather map with romantic locations
